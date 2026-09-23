@@ -17,6 +17,9 @@ type raw struct {
 	Socks struct {
 		Listen *string `yaml:"listen"`
 	} `yaml:"socks"`
+	HTTP struct {
+		Listen *string `yaml:"listen"`
+	} `yaml:"http"`
 	Log struct {
 		File  *string `yaml:"file"`
 		Level *string `yaml:"level"`
@@ -28,6 +31,7 @@ type raw struct {
 type Config struct {
 	SSH          SSHConfig
 	Socks        SocksConfig
+	HTTP         HTTPConfig
 	Log          LogConfig
 	DrainTimeout time.Duration
 }
@@ -49,6 +53,11 @@ type SocksConfig struct {
 	Listen string
 }
 
+// HTTPConfig describes the local HTTP CONNECT proxy listener.
+type HTTPConfig struct {
+	Listen string
+}
+
 // LogConfig describes logging behaviour.
 type LogConfig struct {
 	File  string
@@ -63,6 +72,7 @@ func Defaults() Config {
 			Timeout: 30 * time.Second,
 		},
 		Socks:        SocksConfig{Listen: "127.0.0.1:1080"},
+		HTTP:         HTTPConfig{Listen: ""},
 		Log:          LogConfig{File: "./sshocks.log", Level: "info"},
 		DrainTimeout: 5 * time.Second,
 	}

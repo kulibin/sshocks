@@ -1,11 +1,13 @@
-// Package app wires the config, logger, SSH tunnel and SOCKS5 server together
-// and orchestrates their lifecycle.
+// Package app wires the config, logger, SSH tunnel, SOCKS5 server and the
+// optional HTTP CONNECT proxy together and orchestrates their lifecycle.
 package app
 
 import (
 	"context"
+	"fmt"
 
 	"sshocks/internal/config"
+	"sshocks/internal/httpproxy"
 	"sshocks/internal/log"
 	"sshocks/internal/socks"
 	"sshocks/internal/tunnel"
@@ -16,10 +18,11 @@ const Version = "v1.0.0"
 
 // Application is the top-level wiring and runtime.
 type Application struct {
-	cfg    config.Config
-	log    log.Logger
-	conn   *tunnel.Connector
-	server *socks.Server
+	cfg     config.Config
+	log     log.Logger
+	conn    *tunnel.Connector
+	server  *socks.Server
+	httpSrv *httpproxy.Server
 }
 
 // New builds an Application from a validated config and logger. It wires the
@@ -38,7 +41,14 @@ func New(cfg config.Config, logger log.Logger) *Application {
 	conn := tunnel.NewConnector(tc, logger)
 	srv := socks.NewServer(cfg.Socks.Listen, conn, logger)
 
-	return &Application{cfg: cfg, log: logger, conn: conn, server: srv}
+	a := &Application{cfg: cfg, log: logger, conn: conn, server: srv}
+
+	// The HTTP CONNECT proxy is optional; only created when listen is set.
+	if cfg.HTTP.Listen != "" {
+		a.httpSrv = httpproxy.NewServer(cfg.HTTP.Listen, conn, logger)
+	}
+
+	return a
 }
 
 // Run starts the SSH connector and the SOCKS5 listener, then blocks. It returns
@@ -52,11 +62,30 @@ func (a *Application) Run(ctx context.Context) error {
 	// SSH connector (autodial + reconnect) in the background.
 	go a.conn.Run(ctx)
 
-	// When ctx is cancelled, close the listener so its Accept() unblocks and
-	// the server can exit cleanly.
+	if a.httpSrv != nil {
+		// Bind happened at construction; surface a bind failure as fatal.
+		if err := a.httpSrv.ListenErr(); err != nil {
+			return fmt.Errorf("httpproxy: listen %s: %w", a.cfg.HTTP.Listen, err)
+		}
+		a.log.Infof("httpproxy: listening on %s", a.cfg.HTTP.Listen)
+		// Run in the background until ctx cancels; Shutdown drains its sessions.
+		// A listener Accept error is logged but not fatal (the SOCKS server keeps
+		// serving), so we ignore the return value.
+		go func() {
+			if err := a.httpSrv.Run(ctx); err != nil {
+				a.log.Warnf("httpproxy: server stopped: %v", err)
+			}
+		}()
+	}
+
+	// When ctx is cancelled, close the listeners so their Accept() unblocks and
+	// the servers can exit cleanly.
 	go func() {
 		<-ctx.Done()
 		_ = a.server.Shutdown()
+		if a.httpSrv != nil {
+			_ = a.httpSrv.Shutdown()
+		}
 	}()
 
 	return a.server.Run(ctx)
@@ -67,6 +96,11 @@ func (a *Application) Run(ctx context.Context) error {
 func (a *Application) Shutdown() {
 	a.log.Infof("shutdown: draining active socks sessions...")
 	a.server.Drain(a.cfg.DrainTimeout)
+
+	if a.httpSrv != nil {
+		a.log.Infof("shutdown: draining active http proxy sessions...")
+		a.httpSrv.Drain(a.cfg.DrainTimeout)
+	}
 
 	if err := a.conn.Close(); err != nil {
 		a.log.Warnf("tunnel: close error: %v", err)

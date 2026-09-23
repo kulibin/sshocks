@@ -55,6 +55,10 @@ func apply(r raw) Config {
 		c.Socks.Listen = *r.Socks.Listen
 	}
 
+	if r.HTTP.Listen != nil {
+		c.HTTP.Listen = *r.HTTP.Listen
+	}
+
 	if r.Log.File != nil {
 		c.Log.File = *r.Log.File
 	}

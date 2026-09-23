@@ -12,6 +12,7 @@ var (
 	ErrEmptyUser     = errors.New("config: ssh.user is required")
 	ErrNoCredentials = errors.New("config: ssh.password and ssh.key must not both be empty")
 	ErrInvalidListen = errors.New("config: socks.listen must be host:port")
+	ErrInvalidHTTP   = errors.New("config: http.listen must be host:port")
 	ErrInvalidLevel  = errors.New("config: invalid log.level")
 )
 
@@ -31,6 +32,11 @@ func Validate(c Config) error {
 	if err := validateListen(c.Socks.Listen); err != nil {
 		return err
 	}
+	if c.HTTP.Listen != "" {
+		if err := validateHTTPListen(c.HTTP.Listen); err != nil {
+			return err
+		}
+	}
 	if err := validateLevel(c.Log.Level); err != nil {
 		return err
 	}
@@ -44,6 +50,19 @@ func validateListen(listen string) error {
 	_, _, err := net.SplitHostPort(listen)
 	if err != nil {
 		return fmt.Errorf("%w: %q: %v", ErrInvalidListen, listen, err)
+	}
+	return nil
+}
+
+// validateHTTPListen is like validateListen but treats an empty value as
+// "disabled", so the optional HTTP proxy listener is skipped when unset.
+func validateHTTPListen(listen string) error {
+	if listen == "" {
+		return nil
+	}
+	_, _, err := net.SplitHostPort(listen)
+	if err != nil {
+		return fmt.Errorf("%w: %q: %v", ErrInvalidHTTP, listen, err)
 	}
 	return nil
 }

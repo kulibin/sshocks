@@ -144,6 +144,7 @@ func TestValidate(t *testing.T) {
 		{"empty user", emptyUser(), ErrEmptyUser},
 		{"no credentials", noCreds(), ErrNoCredentials},
 		{"bad listen", badListen(), ErrInvalidListen},
+		{"bad http listen", badHTTPListen(), ErrInvalidHTTP},
 		{"bad level", badLevel(), ErrInvalidLevel},
 	}
 	for _, tc := range cases {
@@ -198,6 +199,15 @@ func badListen() Config {
 	c.SSH.User = "u"
 	c.SSH.Password = "p"
 	c.Socks.Listen = "no-colon"
+	return c
+}
+
+func badHTTPListen() Config {
+	c := Defaults()
+	c.SSH.Host = "h"
+	c.SSH.User = "u"
+	c.SSH.Password = "p"
+	c.HTTP.Listen = "no-colon"
 	return c
 }
 
