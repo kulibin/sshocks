@@ -20,6 +20,9 @@ type raw struct {
 	HTTP struct {
 		Listen *string `yaml:"listen"`
 	} `yaml:"http"`
+	DNS struct {
+		Servers []string `yaml:"servers"`
+	} `yaml:"dns"`
 	Log struct {
 		File  *string `yaml:"file"`
 		Level *string `yaml:"level"`
@@ -32,6 +35,7 @@ type Config struct {
 	SSH          SSHConfig
 	Socks        SocksConfig
 	HTTP         HTTPConfig
+	DNS          DNSConfig
 	Log          LogConfig
 	DrainTimeout time.Duration
 }
@@ -56,6 +60,15 @@ type SocksConfig struct {
 // HTTPConfig describes the local HTTP CONNECT proxy listener.
 type HTTPConfig struct {
 	Listen string
+}
+
+// DNSConfig controls local resolution of target hostnames. When Servers is
+// non-empty, target hostnames from SOCKS5/HTTP requests are resolved by the
+// configured DNS servers on the machine (bypassing a broken local resolver) and
+// the resolved IP is forwarded through the tunnel. Empty means "off": the
+// hostname is handed to the remote side for resolution, as before.
+type DNSConfig struct {
+	Servers []string
 }
 
 // LogConfig describes logging behaviour.

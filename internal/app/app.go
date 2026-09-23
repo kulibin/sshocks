@@ -41,6 +41,18 @@ func New(cfg config.Config, logger log.Logger) *Application {
 	conn := tunnel.NewConnector(tc, logger)
 	srv := socks.NewServer(cfg.Socks.Listen, conn, logger)
 
+	// Optional local DNS resolver. When servers are configured, target hostnames
+	// are resolved locally against those servers (bypassing a broken local
+	// resolver) and the resulting IP is forwarded through the tunnel. Empty means
+	// hostnames are resolved by the remote side, as before.
+	dnsResolver, err := tunnel.NewDNSResolver(cfg.DNS.Servers, 0)
+	if err != nil {
+		logger.Errorf("dns: resolver init: %v", err)
+	} else if dnsResolver != nil {
+		conn.SetResolver(dnsResolver)
+		logger.Infof("dns: local resolution via servers %v", cfg.DNS.Servers)
+	}
+
 	a := &Application{cfg: cfg, log: logger, conn: conn, server: srv}
 
 	// The HTTP CONNECT proxy is optional; only created when listen is set.

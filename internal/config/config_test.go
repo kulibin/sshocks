@@ -146,6 +146,7 @@ func TestValidate(t *testing.T) {
 		{"bad listen", badListen(), ErrInvalidListen},
 		{"bad http listen", badHTTPListen(), ErrInvalidHTTP},
 		{"bad level", badLevel(), ErrInvalidLevel},
+		{"bad dns server", badDNSServer(), ErrInvalidDNSServer},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -218,4 +219,48 @@ func badLevel() Config {
 	c.SSH.Password = "p"
 	c.Log.Level = "verbose"
 	return c
+}
+
+func badDNSServer() Config {
+	c := Defaults()
+	c.SSH.Host = "h"
+	c.SSH.User = "u"
+	c.SSH.Password = "p"
+	c.DNS.Servers = []string{"8.8.8.8", "bogus"}
+	return c
+}
+
+func TestLoadDNSServers(t *testing.T) {
+	path := writeTemp(t, `
+ssh:
+  host: 1.2.3.4
+  user: u
+  password: p
+dns:
+  servers:
+    - 8.8.8.8
+    - 8.8.4.4
+    - 1.1.1.1
+`)
+	c, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(c.DNS.Servers) != 3 {
+		t.Fatalf("DNS.Servers = %v, want 3 entries", c.DNS.Servers)
+	}
+	if err := Validate(c); err != nil {
+		t.Errorf("Validate: %v", err)
+	}
+}
+
+func TestValidateInvalidDNSServer(t *testing.T) {
+	c := Defaults()
+	c.SSH.Host = "h"
+	c.SSH.User = "u"
+	c.SSH.Password = "p"
+	c.DNS.Servers = []string{"not-an-ip"}
+	if err := Validate(c); !errors.Is(err, ErrInvalidDNSServer) {
+		t.Fatalf("Validate = %v, want ErrInvalidDNSServer", err)
+	}
 }

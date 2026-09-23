@@ -59,6 +59,10 @@ func apply(r raw) Config {
 		c.HTTP.Listen = *r.HTTP.Listen
 	}
 
+	if r.DNS.Servers != nil {
+		c.DNS.Servers = r.DNS.Servers
+	}
+
 	if r.Log.File != nil {
 		c.Log.File = *r.Log.File
 	}

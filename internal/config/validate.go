@@ -8,12 +8,13 @@ import (
 
 // Sentinel errors returned by Validate, classifiable via errors.Is.
 var (
-	ErrEmptyHost     = errors.New("config: ssh.host is required")
-	ErrEmptyUser     = errors.New("config: ssh.user is required")
-	ErrNoCredentials = errors.New("config: ssh.password and ssh.key must not both be empty")
-	ErrInvalidListen = errors.New("config: socks.listen must be host:port")
-	ErrInvalidHTTP   = errors.New("config: http.listen must be host:port")
-	ErrInvalidLevel  = errors.New("config: invalid log.level")
+	ErrEmptyHost        = errors.New("config: ssh.host is required")
+	ErrEmptyUser        = errors.New("config: ssh.user is required")
+	ErrNoCredentials    = errors.New("config: ssh.password and ssh.key must not both be empty")
+	ErrInvalidListen    = errors.New("config: socks.listen must be host:port")
+	ErrInvalidHTTP      = errors.New("config: http.listen must be host:port")
+	ErrInvalidLevel     = errors.New("config: invalid log.level")
+	ErrInvalidDNSServer = errors.New("config: dns.servers entries must be IP addresses")
 )
 
 // Validate checks the config for correctness and returns the first error found.
@@ -38,6 +39,9 @@ func Validate(c Config) error {
 		}
 	}
 	if err := validateLevel(c.Log.Level); err != nil {
+		return err
+	}
+	if err := validateDNS(c.DNS.Servers); err != nil {
 		return err
 	}
 	return nil
@@ -74,4 +78,15 @@ func validateLevel(level string) error {
 	default:
 		return fmt.Errorf("%w: %q", ErrInvalidLevel, level)
 	}
+}
+
+// validateDNS checks that each configured DNS server is a valid IP literal.
+// An empty list is valid: it means local resolution is disabled.
+func validateDNS(servers []string) error {
+	for _, s := range servers {
+		if net.ParseIP(s) == nil {
+			return fmt.Errorf("%w: %q", ErrInvalidDNSServer, s)
+		}
+	}
+	return nil
 }

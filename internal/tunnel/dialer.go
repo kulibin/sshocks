@@ -8,9 +8,11 @@ import (
 	"strconv"
 )
 
-// DialTarget dials host:port on the remote side of the SSH tunnel. The target
-// host is resolved by the remote host (the point of a tunnel), bypassing local
-// DNS restrictions. Returns ErrNotConnected if no session is active.
+// DialTarget dials host:port on the remote side of the SSH tunnel. When a
+// resolver is configured, a hostname is resolved locally first (bypassing a
+// broken local resolver) and the resulting IP is forwarded; otherwise the host
+// is resolved by the remote host (the point of a tunnel).
+// Returns ErrNotConnected if no session is active.
 func (c *Connector) DialTarget(ctx context.Context, host string, port int) (net.Conn, error) {
 	client, err := c.Client()
 	if err != nil {
@@ -18,6 +20,19 @@ func (c *Connector) DialTarget(ctx context.Context, host string, port int) (net.
 	}
 	if host == "" {
 		return nil, errors.New("ssh dial: empty target host")
+	}
+
+	c.mu.RLock()
+	resolver := c.resolver
+	c.mu.RUnlock()
+	if resolver != nil {
+		ip, err := resolver.Resolve(ctx, host)
+		if err != nil {
+			return nil, fmt.Errorf("ssh dial target %s: %w", host, err)
+		}
+		if ip != "" {
+			host = ip
+		}
 	}
 
 	target := net.JoinHostPort(host, strconv.Itoa(port))

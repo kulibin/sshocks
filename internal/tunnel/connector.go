@@ -83,9 +83,10 @@ type Connector struct {
 	cfg Config
 	log logger
 
-	mu     sync.RWMutex
-	client *ssh.Client
-	lostCh chan struct{}
+	mu       sync.RWMutex
+	client   *ssh.Client
+	lostCh   chan struct{}
+	resolver Resolver
 }
 
 // NewConnector builds a Connector. It does not dial; call Run.
@@ -283,6 +284,15 @@ func (c *Connector) Close() error {
 	err := c.client.Close()
 	c.client = nil
 	return err
+}
+
+// SetResolver sets the DNS resolver used to resolve target hostnames before
+// they are forwarded through the tunnel. Passing nil disables local resolution
+// and falls back to remote resolution.
+func (c *Connector) SetResolver(r Resolver) {
+	c.mu.Lock()
+	c.resolver = r
+	c.mu.Unlock()
 }
 
 // userHome returns the current user's home directory, or "".
