@@ -14,25 +14,38 @@
 
 ## Возможности (v1)
 
-- Транспорт: `golang.org/x/crypto/ssh` + минимальный SOCKS5-сервер (RFC 1928).
-- ТОЛЬКО TCP-сессии, метод `CONNECT`. Без UDP-ассоциации, без SOCKS4.
-- Аутентификация SSH: пароль и приватный ключ. **Приоритет — пароль**.
+- Транспорт: `golang.org/x/crypto/ssh` + минимальный SOCKS5-сервер (RFC 1928)
+  и опциональный HTTP/1.1 `CONNECT`-прокси.
+- ТОЛЬКО TCP-сессии, метод `CONNECT` (в обоих прокси). Без UDP-ассоциации, без
+  SOCKS4. Без аутентификации на стороне SOCKS5/HTTP (локальный инструмент).
+- Два слушателя поверх одной SSH-сессии: SOCKS5 (`socks.listen`) и HTTP
+  CONNECT (`http.listen`, опц., пусто = выкл). Оба туннелируют трафик через
+  одну и ту же SSH-сессию через `Connector.DialTarget`.
+- Аутентификация SSH: пароль и приватный ключ. **Приоритет — пароль**: методы
+  аутентификации предлагаются SSH-серверу в порядке пароль → ключ.
 - Проверка host key **выключена** (`ssh.InsecureIgnoreHostKey()`).
-- Авто-реконнект SSH: экспоненциальный backoff 1s → 30s. Слушатель SOCKS5
-  продолжает работать при обрыве SSH; новые сессии отклоняются до реконнекта.
-- Graceful shutdown: SIGINT/SIGTERM → отмена контекста → drain до `drain_timeout`
-  → форс-закрытие → выход 0.
+- Здоровье SSH держится проактивно: «watcher» раз в `keepAliveInterval` (1s)
+  гоняет `SendRequest("keepalive@sshocks.local")` по сессии; по ошибке транспорта
+  сессия считается потерянной и запускается авто-реконнект.
+- Авто-реконнект SSH: экспоненциальный backoff 1s → 30s (без jitter). Слушатели
+  SOCKS5/HTTP продолжают работать при обрыве SSH; новые сессии отклоняются до
+  реконнекта.
+- Graceful shutdown: SIGINT/SIGTERM → отмена контекста → drain обоих прокси до
+  `drain_timeout` → форс-закрытие → `Connector.Close()` → flush+close логгера →
+  выход 0.
+- Локальное разрешение DNS (опц.): блок `dns.servers` (см. ниже).
+- Версия сборки, выводимая в лог при старте: `v1.0.0` (константа `app.Version`).
 
 ## Сборка
 
 ```sh
 go build ./...
 go vet ./...
-go test ./internal/config/...   # обязательный юнит
+go test ./...                    # юниты config, tunnel, socks, httpproxy
 ```
 
 Модуль `sshocks`, Go 1.27.1. Внешние зависимости: `golang.org/x/crypto/ssh`,
-`gopkg.in/yaml.v3`.
+`gopkg.in/yaml.v3` (косвенно `golang.org/x/sys`).
 
 ## Запуск
 
@@ -81,7 +94,25 @@ drain_timeout: 5s
 на этой машине против этих серверов (обходя сломанный/заблокированный локальный
 резолвер), а полученный IP прокидывается через SSH-туннель. Если список пуст —
 имя разрешается на удалённой стороне (поведение по умолчанию). Недействительный
-IP в списке — ошибка валидации (выход ≠ 0).
+IP в списке — ошибка валидации (выход ≠ 0). Разрешение работает одинаково для
+SOCKS5 и HTTP-прокси (общий `Connector.DialTarget`): IP-литерал прокидывается
+напрямую, имя — против `dns.servers` или удалённой стороной.
+
+## HTTP CONNECT-прокси
+
+Помимо SOCKS5, приложение поднимает **опциональный** HTTP/1.1 `CONNECT`-прокси на
+`http.listen` (дефолт `127.0.0.1:8080`; пустое значение или отсутствие блока =
+выкл). Он принимает только команду `CONNECT host:port HTTP/1.1`, отбрасывает
+оставшиеся заголовки и прокидывает трафик через ту же SSH-сессию, что и SOCKS5.
+
+```sh
+curl -x 127.0.0.1:8080 https://example.com/
+curl -x 127.0.0.1:8080 https://example.com:8443/
+```
+
+Отклики дублируются HTTP-статусами в ответе на `CONNECT`: `400` — некорректная
+строка запроса или адрес, `502` — целевой dial завершился ошибкой. В отличие от
+SOCKS5, HTTP-прокси поддерживает только `CONNECT` (без `GET`/`POST`, без UDP).
 
 ## Логирование
 
@@ -113,8 +144,10 @@ docker compose -f smoke/docker-compose.yml up -d
 Ожидаемый результат: `curl` получает ответ эхо-сервера через SSH-туннель;
 лог содержит все важные события. `kill -INT` → drain + выход 0.
 
-Автоматических интеграционных тестов в v1 нет; обязательны юниты парсера/
-валидатора конфига (`internal/config`) и SOCKS5-хэндшейка (`internal/socks`).
+Автоматических интеграционных тестов в v1 нет; обязательны юниты:
+`internal/config` (парсер/валидатор), `internal/socks` (хэндшейк),
+`internal/httpproxy` (CONNECT-хэндшейк), `internal/tunnel` (выбор аутентификации,
+DNS-resolver).
 
 ## Организация кода
 
@@ -122,11 +155,13 @@ docker compose -f smoke/docker-compose.yml up -d
 фейкового репозитория — у приложения нет хранилища данных).
 
 ```
-internal/config   структура, загрузка, валидация конфига (+ юнит)
-internal/tunnel   SSH-коннектор (auth-выбор, autoreconnect) + dialer
-internal/socks    SOCKS5-сервер: handshake, server, handler, ошибки
-internal/app      wiring + Run/Shutdown(drain)
-cmd/sshocks       точка входа (инициализация, сигналы)
+internal/config      структура, загрузка, валидация конфига (+ юнит, duration.go — YAML-таймауты)
+internal/tunnel      SSH-коннектор (auth-выбор, keepalive+autoreconnect) + dialer + DNS-resolver (+ юниты)
+internal/socks       SOCKS5-сервер (RFC 1928): handshake, server, handler, ошибки (+ юнит)
+internal/httpproxy   HTTP/1.1 CONNECT-прокси: handshake, server, handler, ошибки (+ юнит)
+internal/log         level-aware file-логгер (Flush/Close, Discard)
+internal/app         wiring config+logger+tunnel+socks+httpproxy, New/Run/Shutdown(drain)
+cmd/sshocks          точка входа (флаги, конфиг, сигналы, drain)
 ```
 
 ## Открытые вопросы (v2)
